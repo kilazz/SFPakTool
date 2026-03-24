@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.IO.Compression;
 
 namespace PakTool;
 
@@ -23,7 +24,9 @@ public partial class MainWindow : Window
         var btnBatchUnpack = this.FindControl<Button>("BtnBatchUnpack");
         var btnOpenFolder = this.FindControl<Button>("BtnOpenFolder");
         var btnPack = this.FindControl<Button>("BtnPack");
+        var btnBatchPack = this.FindControl<Button>("BtnBatchPack");
         var fileTree = this.FindControl<TreeView>("FileTree");
+        var cmbFormat = this.FindControl<ComboBox>("CmbPackFormat");
 
         if (btnOpenPak != null)
         {
@@ -50,9 +53,37 @@ public partial class MainWindow : Window
             btnPack.Click += BtnPack_Click;
         }
 
+        if (btnBatchPack != null)
+        {
+            btnBatchPack.Click += BtnBatchPack_Click;
+        }
+
         if (fileTree != null)
         {
             fileTree.ItemsSource = _treeItems;
+        }
+
+        if (cmbFormat != null)
+        {
+            cmbFormat.SelectionChanged += CmbPackFormat_SelectionChanged;
+            // Initialize state
+            var cmbCompression = this.FindControl<ComboBox>("CmbCompressionLevel");
+            if (cmbCompression != null)
+            {
+                cmbCompression.IsEnabled = cmbFormat.SelectedIndex != 0;
+            }
+        }
+    }
+
+    private void CmbPackFormat_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var cmbFormat = this.FindControl<ComboBox>("CmbPackFormat");
+        var cmbCompression = this.FindControl<ComboBox>("CmbCompressionLevel");
+
+        if (cmbFormat != null && cmbCompression != null)
+        {
+            // SpellForce 1 index is 0, SpellForce 2 index is 1
+            cmbCompression.IsEnabled = cmbFormat.SelectedIndex != 0;
         }
     }
 
@@ -90,24 +121,32 @@ public partial class MainWindow : Window
 
             var btnUnpack = this.FindControl<Button>("BtnUnpack");
             var btnPack = this.FindControl<Button>("BtnPack");
-            if (btnUnpack != null)
-            {
-                btnUnpack.IsEnabled = true;
-            }
-
-            if (btnPack != null)
-            {
-                btnPack.IsEnabled = false;
-            }
-
             try
             {
-                var entries = await PakArchive.ReadEntriesAsync(_currentPakPath);
+                var (format, entries) = await PakArchive.ReadEntriesAsync(_currentPakPath);
                 BuildTreeFromEntries(entries);
-                Log($"Opened {_currentPakPath}. Found {entries.Count} files.");
+                string formatName = format == PakFormat.SpellForce1 ? "SpellForce 1" : "SpellForce 2";
+                Log($"Opened {_currentPakPath}. Format: {formatName}. Found {entries.Count} files.");
+
+                if (btnUnpack != null)
+                {
+                    btnUnpack.IsEnabled = true;
+                }
+
+                if (btnPack != null)
+                {
+                    btnPack.IsEnabled = false;
+                }
             }
             catch (Exception ex)
             {
+                _currentPakPath = null;
+                if (btnUnpack != null)
+                {
+                    btnUnpack.IsEnabled = false;
+                }
+
+                _treeItems.Clear();
                 Log($"Error opening PAK: {ex.Message}");
             }
         }
@@ -253,6 +292,69 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void BtnBatchPack_Click(object? sender, RoutedEventArgs e)
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null)
+        {
+            return;
+        }
+
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select root folder containing subfolders to pack"
+        });
+
+        if (folders.Count == 0)
+        {
+            return;
+        }
+
+        string rootDir = folders[0].Path.LocalPath;
+        var subDirs = Directory.GetDirectories(rootDir);
+
+        if (subDirs.Length == 0)
+        {
+            Log("No subfolders found to pack.");
+            return;
+        }
+
+        var cmbFormat = this.FindControl<ComboBox>("CmbPackFormat");
+        var cmbCompression = this.FindControl<ComboBox>("CmbCompressionLevel");
+
+        PakFormat format = cmbFormat?.SelectedIndex == 0 ? PakFormat.SpellForce1 : PakFormat.SpellForce2;
+        CompressionLevel compLevel = (CompressionLevel)(cmbCompression?.SelectedIndex ?? 0);
+
+        Log($"Starting batch pack of {subDirs.Length} folders...");
+
+        foreach (var subDir in subDirs)
+        {
+            string folderName = Path.GetFileName(subDir);
+            string baseName = folderName;
+
+            // Remove _extracted suffix if present
+            if (folderName.EndsWith("_extracted", StringComparison.OrdinalIgnoreCase))
+            {
+                baseName = folderName.Substring(0, folderName.Length - "_extracted".Length);
+            }
+
+            string outPakPath = Path.Combine(rootDir, baseName + ".pak");
+
+            Log($"Packing {folderName} to {baseName}.pak...");
+            try
+            {
+                await PakArchive.PackAsync(subDir, outPakPath, compLevel, format, Log);
+                Log($"Successfully packed: {baseName}.pak");
+            }
+            catch (Exception ex)
+            {
+                Log($"Error packing {folderName}: {ex.Message}");
+            }
+        }
+
+        Log("Batch pack complete!");
+    }
+
     private async void BtnPack_Click(object? sender, RoutedEventArgs e)
     {
         if (string.IsNullOrEmpty(_currentFolderPath))
@@ -277,6 +379,26 @@ public partial class MainWindow : Window
         {
             string outPath = file.Path.LocalPath;
 
+            var cmbCompression = this.FindControl<ComboBox>("CmbCompressionLevel");
+            System.IO.Compression.CompressionLevel compLevel = System.IO.Compression.CompressionLevel.Optimal;
+            if (cmbCompression != null)
+            {
+                compLevel = cmbCompression.SelectedIndex switch
+                {
+                    1 => System.IO.Compression.CompressionLevel.SmallestSize,
+                    2 => System.IO.Compression.CompressionLevel.Fastest,
+                    3 => System.IO.Compression.CompressionLevel.NoCompression,
+                    _ => System.IO.Compression.CompressionLevel.Optimal
+                };
+            }
+
+            var cmbFormat = this.FindControl<ComboBox>("CmbPackFormat");
+            PakFormat packFormat = PakFormat.SpellForce2;
+            if (cmbFormat != null && cmbFormat.SelectedIndex == 0)
+            {
+                packFormat = PakFormat.SpellForce1;
+            }
+
             var btnPack = this.FindControl<Button>("BtnPack");
             var btnOpenFolder = this.FindControl<Button>("BtnOpenFolder");
 
@@ -292,7 +414,7 @@ public partial class MainWindow : Window
 
             try
             {
-                await PakArchive.PackAsync(_currentFolderPath, outPath, Log);
+                await PakArchive.PackAsync(_currentFolderPath, outPath, compLevel, packFormat, Log);
             }
             catch (Exception ex)
             {

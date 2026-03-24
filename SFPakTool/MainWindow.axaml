@@ -10,7 +10,18 @@
 				<Separator Margin="0,5"/>
 				<TextBlock Text="Pack Archive" FontWeight="Bold"/>
 				<Button Name="BtnOpenFolder" Content="Select Folder" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+				<ComboBox Name="CmbPackFormat" SelectedIndex="1" HorizontalAlignment="Stretch">
+					<ComboBoxItem>SpellForce 1 (.pak)</ComboBoxItem>
+					<ComboBoxItem>SpellForce 2 (.pak)</ComboBoxItem>
+				</ComboBox>
+				<ComboBox Name="CmbCompressionLevel" SelectedIndex="0" HorizontalAlignment="Stretch">
+					<ComboBoxItem>Optimal (Directory Block)</ComboBoxItem>
+					<ComboBoxItem>Smallest Size (Directory Block)</ComboBoxItem>
+					<ComboBoxItem>Fastest (Directory Block)</ComboBoxItem>
+					<ComboBoxItem>No Compression (Directory Block)</ComboBoxItem>
+				</ComboBox>
 				<Button Name="BtnPack" Content="Pack to .PAK" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" IsEnabled="False"/>
+				<Button Name="BtnBatchPack" Content="Batch Pack Folders" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
 			</StackPanel>
 		</ScrollViewer>
 		<Border Grid.Row="1" Grid.Column="1" Background="#1E1E1E" CornerRadius="5" Margin="10,0,20,0" BorderBrush="#333333" BorderThickness="1">
