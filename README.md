@@ -1,5 +1,4 @@
 # SpellForce Pak Tool
-
 Utility for unpacking/packing `.pak` archives for the game **SpellForce 1/2**.
 
 ## Features
