@@ -1,6 +1,6 @@
 # SpellForce Pak Tool
 
-A modern, cross-platform utility for unpacking/packing `.pak` archives for the game **SpellForce 1/2**.
+Utility for unpacking/packing `.pak` archives for the game **SpellForce 1/2**.
 
 ## Features
 * **Cross-platform**: Works on Windows, macOS, and Linux.
