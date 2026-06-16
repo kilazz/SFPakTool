@@ -11,7 +11,7 @@ A complete, high-performance, and lightweight modding suite for **SpellForce 1 &
   * Batch unpack all `.pak` archives found within a selected directory into individual folders.
   * Batch pack all subdirectories in a root folder (exclusively compiling folders ending in `_extracted` back to `.pak` files).
 
-### 🗄️ CFF Database Container Engine
+### 🗄️ CFF Database Container Engine (SF2)
 * **Container Packaging:** Unpack `.cff` database containers into raw `.dat` chunks, and pack them back with customizable Zlib compression levels.
 * **Localization Exporter:** Automatically detect binary database schema types:
   * **Format A** (String Table - UTF-16LE)
