@@ -1,14 +1,42 @@
-# SpellForce Pak Tool
-Utility for unpacking/packing `.pak` archives for the game **SpellForce 1/2**.
+## SFTool
+A complete, high-performance, and lightweight modding suite for **SpellForce 1 & 2** games.
 
 ## Features
-* **Unpack**: Extract individual `.pak` files or batch extract an entire directory (auto-detects SF1 and SF2 formats).
-* **Pack**: Creates valid SpellForce 2 `.pak` archives SF2 format.
 
-## How to Build
-1. Install the [.NET 10 SDK](https://dotnet.microsoft.com/download).
-2. Clone the repository.
-3. Run the following command in the `SFPakTool/SFPakTool` directory:
-   ```bash
-   dotnet run
-   ```
+### 📦 PAK Archive Management
+* **Interactive TreeView:** Explore archive structures with a fully collapsible and expandable directory explorer tree (with hover highlights and folder icons).
+* **Unpack:** Extract individual `.pak` files (auto-detects legacy SpellForce 1 and SpellForce 2 formats).
+* **Pack:** Compile directories into fully valid SpellForce 2 `.pak` archives with adjustable Zlib compression.
+* **Batch Operations:**
+  * Batch unpack all `.pak` archives found within a selected directory into individual folders.
+  * Batch pack all subdirectories in a root folder (exclusively compiling folders ending in `_extracted` back to `.pak` files).
+
+### 🗄️ CFF Database Container Engine
+* **Container Packaging:** Unpack `.cff` database containers into raw `.dat` chunks, and pack them back with customizable Zlib compression levels.
+* **Localization Exporter:** Automatically detect binary database schema types:
+  * **Format A** (String Table - UTF-16LE)
+  * **Format B** (Table-Based - Multi-string UTF-16LE with metadata)
+  * **Format C** (Developer Table - CP1252 / ANSI)
+* **Translation Suite:** Export detected text datasets into clean, sorted JSON files for easy translation, and automatically compile edited JSON files back into binary database chunks.
+
+### 🔍 Binary Chunk Inspector
+* **String Scanner:** Scan binary `.dat` chunks for plain printable ASCII strings or asset paths, with on-the-fly search filtering.
+* **Value Modifier:** Safely inspect, read, and overwrite values directly at any decimal or hex offset. Supports multiple raw data types:
+  * `Byte` (uint8)
+  * `Int16` (short)
+  * `Int32` (int)
+  * `Float32`
+  * `String` (ANSI string with automatic null-termination)
+
+## How to Build & Run
+
+### Prerequisites
+* Install [Rust & Cargo](https://www.rust-lang.org/tools/install).
+
+### Compilation
+1. Clone the repository and open your terminal in the project's root directory.
+2. To compile and run the application:
+```
+cargo run
+cargo build --release
+```

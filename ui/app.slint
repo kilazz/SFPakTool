@@ -1,0 +1,393 @@
+// app.slint
+import { LineEdit, StandardListView, ListView, ComboBox, SpinBox, TextEdit } from "std-widgets.slint";
+
+// Custom Premium Dark Button Component with Text Overflow Protection
+component ToolButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    height: 35px;
+    background: !enabled ? #181818 : (ta.has-hover ? #3E3E42 : #252526);
+    border-color: !enabled ? #222222 : (ta.has-hover ? #555555 : #333333);
+    border-width: 1px;
+    border-radius: 4px;
+
+    Text {
+        text: root.text;
+        color: !root.enabled ? #555555 : (ta.has-hover ? #FFFFFF : #CCCCCC);
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide; // Automatically truncates long paths with "..."
+        width: parent.width - 20px; // Safety padding to prevent border-touching
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "SFTool";
+    min-width: 1020px;
+    min-height: 680px;
+    preferred-width: 1020px;
+    preferred-height: 680px;
+    background: #141414; // Soft modern dark background (instead of pure black)
+
+    // Navigation and States
+    in-out property <int> active_tab: 0; // 0: PAK, 1: CFF, 2: Inspector, 3: Terminal
+    in-out property <string> selected_pak: "";
+    in-out property <string> selected_folder: "";
+    in-out property <string> selected_cff: "";
+    in-out property <string> selected_cff_dir: "";
+    in-out property <string> selected_dat: "";
+    in-out property <string> filter_text: "";
+
+    // Persisted settings (prevent state loss when switching tabs)
+    in-out property <string> persisted_pak_fmt: "SpellForce 2 (.pak)";
+    in-out property <int> persisted_pak_comp: 6;
+    in-out property <int> persisted_cff_comp: 6;
+
+    // Shared properties
+    in-out property <string> log_text: "System Ready.\n";
+    in-out property <string> status_msg: "Ready.";
+    in-out property <[StandardListViewItem]> archive_files: [];
+
+    // Callbacks
+    callback browse_file(string) -> string;
+    callback browse_folder() -> string;
+    callback save_file(string) -> string;
+
+    callback unpack_pak(string, string);
+    callback pack_pak(string, string, string, int);
+    callback batch_unpack_pak(string);
+    callback batch_pack_pak(string, string, int);
+    callback archive_item_clicked(int);
+
+    callback unpack_cff(string, string);
+    callback pack_cff(string, string, int);
+
+    callback scan_binary(string, string);
+    callback read_value(string, string, string) -> string;
+    callback write_value(string, string, string, string);
+
+    in-out property <[StandardListViewItem]> inspector_results: [];
+
+    VerticalLayout {
+        padding: 15px;
+        spacing: 15px;
+
+        // Header Navigation Bar (Flat & Minimalist Tabs)
+        HorizontalLayout {
+            alignment: center;
+            spacing: 35px;
+            height: 35px;
+
+            Text {
+                text: "PAK TOOL";
+                font-size: 14px;
+                font-weight: root.active_tab == 0 ? 800 : 500;
+                color: root.active_tab == 0 ? #FFFFFF : #6F6F6F;
+                vertical-alignment: center;
+                TouchArea { clicked => { root.active_tab = 0; } }
+            }
+            Text {
+                text: "CFF DATABASE";
+                font-size: 14px;
+                font-weight: root.active_tab == 1 ? 800 : 500;
+                color: root.active_tab == 1 ? #FFFFFF : #6F6F6F;
+                vertical-alignment: center;
+                TouchArea { clicked => { root.active_tab = 1; } }
+            }
+            Text {
+                text: "CHUNK INSPECTOR";
+                font-size: 14px;
+                font-weight: root.active_tab == 2 ? 800 : 500;
+                color: root.active_tab == 2 ? #FFFFFF : #6F6F6F;
+                vertical-alignment: center;
+                TouchArea { clicked => { root.active_tab = 2; } }
+            }
+            Text {
+                text: "TERMINAL";
+                font-size: 14px;
+                font-weight: root.active_tab == 3 ? 800 : 500;
+                color: root.active_tab == 3 ? #FFFFFF : #6F6F6F;
+                vertical-alignment: center;
+                TouchArea { clicked => { root.active_tab = 3; } }
+            }
+        }
+
+        // Title text centered, mimicking the screenshot
+        Text {
+            text: root.active_tab == 0 ? "SpellForce Pak Tool" :
+                  (root.active_tab == 1 ? "CFF Database Container Tool" :
+                  (root.active_tab == 2 ? "Binary Chunk Inspector" : "Progress Terminal"));
+            font-size: 26px;
+            font-weight: 800;
+            color: #FFFFFF;
+            horizontal-alignment: center;
+            height: 35px;
+        }
+
+        // Main Workspace
+        HorizontalLayout {
+            spacing: 20px;
+
+            // Left Panel (Input Controls Card)
+            Rectangle {
+                width: 420px;
+                background: #1C1C1C; // Soft dark gray container
+                border-color: #2C2C2C; // Subtle separator gray
+                border-width: 1px;
+                border-radius: 8px;
+
+                // Tab 0: PAK Archive Panel (Matches screenshot 1:1)
+                if (root.active_tab == 0) : VerticalLayout {
+                    spacing: 14px;
+                    padding: 18px;
+
+                    Text { text: "Unpack Archive"; font-size: 14px; font-weight: 700; color: #FFFFFF; }
+                    ToolButton {
+                        text: root.selected_pak == "" ? "Open .PAK Archive" : "Selected: " + root.selected_pak;
+                        clicked => { root.selected_pak = root.browse_file("pak"); }
+                    }
+                    ToolButton {
+                        text: "Extract All";
+                        enabled: root.selected_pak != "";
+                        clicked => {
+                            let out_path = root.browse_folder();
+                            if (out_path != "") { root.unpack_pak(root.selected_pak, out_path); }
+                        }
+                    }
+                    ToolButton {
+                        text: "Batch Unpack All .PAK";
+                        clicked => {
+                            let root_folder = root.browse_folder();
+                            if (root_folder != "") { root.batch_unpack_pak(root_folder); }
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: #2C2C2C; }
+
+                    Text { text: "Pack Archive"; font-size: 14px; font-weight: 700; color: #FFFFFF; }
+                    ToolButton {
+                        text: root.selected_folder == "" ? "Select Folder" : "Selected Folder: " + root.selected_folder;
+                        clicked => { root.selected_folder = root.browse_folder(); }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Format:"; color: #AAAAAA; vertical-alignment: center; width: 60px; }
+                        pak_fmt := ComboBox {
+                            model: ["SpellForce 2 (.pak)", "SpellForce 1 (.pak)"];
+                            current-value <=> root.persisted_pak_fmt;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Zlib:"; color: #AAAAAA; vertical-alignment: center; width: 60px; }
+                        pak_comp := SpinBox {
+                            value <=> root.persisted_pak_comp;
+                            minimum: 0;
+                            maximum: 9;
+                        }
+                    }
+                    ToolButton {
+                        text: "Pack to .PAK";
+                        enabled: root.selected_folder != "";
+                        clicked => {
+                            let target = root.save_file("pak");
+                            if (target != "") { root.pack_pak(root.selected_folder, target, root.persisted_pak_fmt, root.persisted_pak_comp); }
+                        }
+                    }
+                    ToolButton {
+                        text: "Batch Pack Folders";
+                        clicked => {
+                            let root_folder = root.browse_folder();
+                            if (root_folder != "") { root.batch_pack_pak(root_folder, root.persisted_pak_fmt, root.persisted_pak_comp); }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+
+                // Tab 1: CFF Database Panel
+                if (root.active_tab == 1) : VerticalLayout {
+                    spacing: 14px;
+                    padding: 18px;
+
+                    Text { text: "Unpack CFF Container"; font-size: 14px; font-weight: 700; color: #FFFFFF; }
+                    ToolButton {
+                        text: root.selected_cff == "" ? "Open .CFF Database" : "Selected: " + root.selected_cff;
+                        clicked => { root.selected_cff = root.browse_file("cff"); }
+                    }
+                    ToolButton {
+                        text: "Unpack Database & Text JSONs";
+                        enabled: root.selected_cff != "";
+                        clicked => {
+                            let out_path = root.browse_folder();
+                            if (out_path != "") { root.unpack_cff(root.selected_cff, out_path); }
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: #2C2C2C; }
+
+                    Text { text: "Compile & Pack CFF"; font-size: 14px; font-weight: 700; color: #FFFFFF; }
+                    ToolButton {
+                        text: root.selected_cff_dir == "" ? "Select Work Directory" : "Selected: " + root.selected_cff_dir;
+                        clicked => { root.selected_cff_dir = root.browse_folder(); }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Zlib Level:"; color: #AAAAAA; vertical-alignment: center; width: 80px; }
+                        cff_comp := SpinBox {
+                            value <=> root.persisted_cff_comp;
+                            minimum: 0;
+                            maximum: 9;
+                        }
+                    }
+                    ToolButton {
+                        text: "Compile & Pack to .CFF";
+                        enabled: root.selected_cff_dir != "";
+                        clicked => {
+                            let target = root.save_file("cff");
+                            if (target != "") { root.pack_cff(root.selected_cff_dir, target, root.persisted_cff_comp); }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+
+                // Tab 2: Binary Chunk Inspector Panel
+                if (root.active_tab == 2) : VerticalLayout {
+                    spacing: 14px;
+                    padding: 18px;
+
+                    Text { text: "Open File"; font-size: 14px; font-weight: 700; color: #FFFFFF; }
+                    ToolButton {
+                        text: root.selected_dat == "" ? "Open .DAT Chunk File" : "Selected: " + root.selected_dat;
+                        clicked => { root.selected_dat = root.browse_file("dat"); }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Filter:"; color: #AAAAAA; vertical-alignment: center; width: 60px; }
+                        filter_in := LineEdit { text <=> root.filter_text; font-family: "Consolas"; }
+                    }
+                    ToolButton {
+                        text: "Scan Binary Strings";
+                        enabled: root.selected_dat != "";
+                        clicked => { root.scan_binary(root.selected_dat, root.filter_text); }
+                    }
+
+                    Rectangle { height: 1px; background: #2C2C2C; }
+
+                    StandardListView {
+                        model: root.inspector_results;
+                        height: 250px;
+                    }
+                }
+
+                // Tab 3: Empty Panel (Terminal active)
+                if (root.active_tab == 3) : VerticalLayout {
+                    alignment: center;
+                    padding: 18px;
+                    Text {
+                        text: "Terminal logs are displayed in full space on the right.";
+                        color: #666666;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Right Panel (Visual Display Area / TreeView Card / Full terminal)
+            Rectangle {
+                background: #1C1C1C;
+                border-color: #2C2C2C;
+                border-width: 1px;
+                border-radius: 8px;
+
+                // Show Interactive TreeView on Tab 0 & Tab 1
+                if (root.active_tab == 0 || root.active_tab == 1) : VerticalLayout {
+                    padding: 10px;
+                    ListView {
+                        for item[index] in root.archive_files: Rectangle {
+                            height: 24px;
+                            background: ta.has-hover ? #2D2D2D : (Math.mod(index, 2) == 0 ? #1E1E1E : #1C1C1C);
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                Text {
+                                    text: item.text;
+                                    color: white;
+                                    font-family: "Consolas";
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            ta := TouchArea {
+                                clicked => {
+                                    root.archive_item_clicked(index);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Show Value Modifier on Tab 2 (Inspector Panel Right side)
+                if (root.active_tab == 2) : VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+
+                    Text { text: "Value Modifier & Hex Inspector"; font-size: 15px; font-weight: 700; color: #FFFFFF; }
+
+                    HorizontalLayout { Text { text: "Target Offset:"; color: #AAAAAA; width: 120px; } offset_in := LineEdit { text: "0"; } }
+                    HorizontalLayout {
+                        Text { text: "Data Type:"; color: #AAAAAA; width: 120px; }
+                        type_in := ComboBox { model: ["Byte", "Int16", "Int32", "Float32", "String"]; current-value: "Int16"; }
+                    }
+
+                    ToolButton {
+                        text: "Read Value";
+                        enabled: root.selected_dat != "";
+                        clicked => { current_val.text = root.read_value(root.selected_dat, offset_in.text, type_in.current-value); }
+                    }
+                    HorizontalLayout { Text { text: "Current Value:"; color: #AAAAAA; width: 120px; } current_val := LineEdit { read-only: true; } }
+
+                    HorizontalLayout { Text { text: "New Value:"; color: #AAAAAA; width: 120px; } new_val := LineEdit {} }
+                    ToolButton {
+                        text: "Write to Binary File";
+                        enabled: root.selected_dat != "";
+                        clicked => {
+                            root.write_value(root.selected_dat, offset_in.text, type_in.current-value, new_val.text);
+                            root.scan_binary(root.selected_dat, root.filter_text);
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+
+                // Show Log Terminal on Tab 3 (Terminal Panel Right side)
+                if (root.active_tab == 3) : VerticalLayout {
+                    padding: 10px;
+                    TextEdit {
+                        text <=> root.log_text;
+                        read-only: true;
+                        font-family: "Consolas";
+                        font-size: 13px;
+                    }
+                }
+            }
+        }
+
+        // Status Bar (Strictly matches the footer style of the screenshot)
+        Rectangle {
+            height: 30px;
+            background: #1C1C1C;
+            border-color: #2C2C2C;
+            border-width: 1px;
+            border-radius: 4px;
+            Text { x: 10px; color: #4CAF50; text: root.status_msg; vertical-alignment: center; font-size: 13px; }
+        }
+    }
+}
