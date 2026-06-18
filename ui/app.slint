@@ -1,4 +1,3 @@
-// app.slint
 import { LineEdit, StandardListView, ListView, ComboBox, SpinBox, TextEdit } from "std-widgets.slint";
 
 // Custom Premium Dark Button Component with Text Overflow Protection
@@ -20,8 +19,8 @@ component ToolButton inherits Rectangle {
         font-weight: 600;
         horizontal-alignment: center;
         vertical-alignment: center;
-        overflow: elide; // Automatically truncates long paths with "..."
-        width: parent.width - 20px; // Safety padding to prevent border-touching
+        overflow: elide;
+        width: parent.width - 20px;
     }
 
     ta := TouchArea {
@@ -33,13 +32,12 @@ component ToolButton inherits Rectangle {
 export component AppWindow inherits Window {
     title: "SFTool";
     min-width: 1020px;
-    min-height: 680px;
+    min-height: 720px;
     preferred-width: 1020px;
-    preferred-height: 680px;
-    background: #141414; // Soft modern dark background (instead of pure black)
+    preferred-height: 720px;
+    background: #141414;
 
-    // Navigation and States
-    in-out property <int> active_tab: 0; // 0: PAK, 1: CFF, 2: Inspector, 3: Terminal
+    in-out property <int> active_tab: 0;
     in-out property <string> selected_pak: "";
     in-out property <string> selected_folder: "";
     in-out property <string> selected_cff: "";
@@ -47,25 +45,23 @@ export component AppWindow inherits Window {
     in-out property <string> selected_dat: "";
     in-out property <string> filter_text: "";
 
-    // Persisted settings (prevent state loss when switching tabs)
     in-out property <string> persisted_pak_fmt: "SpellForce 2 (.pak)";
+    in-out property <string> persisted_sf1_mode: "Meta-Template (100% Stable)";
     in-out property <int> persisted_pak_comp: 6;
     in-out property <int> persisted_cff_comp: 6;
 
-    // Shared properties
     in-out property <string> log_text: "System Ready.\n";
     in-out property <string> status_msg: "Ready.";
     in-out property <[StandardListViewItem]> archive_files: [];
 
-    // Callbacks
     callback browse_file(string) -> string;
     callback browse_folder() -> string;
     callback save_file(string) -> string;
 
     callback unpack_pak(string, string);
-    callback pack_pak(string, string, string, int);
+    callback pack_pak(string, string, string, int, string);
     callback batch_unpack_pak(string);
-    callback batch_pack_pak(string, string, int);
+    callback batch_pack_pak(string, string, int, string);
     callback archive_item_clicked(int);
 
     callback unpack_cff(string, string);
@@ -81,7 +77,6 @@ export component AppWindow inherits Window {
         padding: 15px;
         spacing: 15px;
 
-        // Header Navigation Bar (Flat & Minimalist Tabs)
         HorizontalLayout {
             alignment: center;
             spacing: 35px;
@@ -121,7 +116,6 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Title text centered, mimicking the screenshot
         Text {
             text: root.active_tab == 0 ? "SpellForce Pak Tool" :
                   (root.active_tab == 1 ? "CFF Database Container Tool" :
@@ -133,21 +127,18 @@ export component AppWindow inherits Window {
             height: 35px;
         }
 
-        // Main Workspace
         HorizontalLayout {
             spacing: 20px;
 
-            // Left Panel (Input Controls Card)
             Rectangle {
-                width: 420px;
-                background: #1C1C1C; // Soft dark gray container
-                border-color: #2C2C2C; // Subtle separator gray
+                width: 440px;
+                background: #1C1C1C;
+                border-color: #2C2C2C;
                 border-width: 1px;
                 border-radius: 8px;
 
-                // Tab 0: PAK Archive Panel (Matches screenshot 1:1)
                 if (root.active_tab == 0) : VerticalLayout {
-                    spacing: 14px;
+                    spacing: 12px;
                     padding: 18px;
 
                     Text { text: "Unpack Archive"; font-size: 14px; font-weight: 700; color: #FFFFFF; }
@@ -180,40 +171,50 @@ export component AppWindow inherits Window {
                     }
                     HorizontalLayout {
                         spacing: 10px;
-                        Text { text: "Format:"; color: #AAAAAA; vertical-alignment: center; width: 60px; }
+                        Text { text: "Format:"; color: #AAAAAA; vertical-alignment: center; width: 65px; }
                         pak_fmt := ComboBox {
                             model: ["SpellForce 2 (.pak)", "SpellForce 1 (.pak)"];
                             current-value <=> root.persisted_pak_fmt;
                         }
                     }
-                    HorizontalLayout {
+
+                    if (root.persisted_pak_fmt == "SpellForce 1 (.pak)") : HorizontalLayout {
                         spacing: 10px;
-                        Text { text: "Zlib:"; color: #AAAAAA; vertical-alignment: center; width: 60px; }
-                        pak_comp := SpinBox {
+                        Text { text: "SF1 Mode:"; color: #AAAAAA; vertical-alignment: center; width: 65px; }
+                        ComboBox {
+                            model: ["Meta-Template (100% Stable)", "From Scratch"];
+                            current-value <=> root.persisted_sf1_mode;
+                        }
+                    }
+
+                    if (root.persisted_pak_fmt != "SpellForce 1 (.pak)") : HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Zlib Level:"; color: #AAAAAA; vertical-alignment: center; width: 65px; }
+                        SpinBox {
                             value <=> root.persisted_pak_comp;
                             minimum: 0;
                             maximum: 9;
                         }
                     }
+
                     ToolButton {
                         text: "Pack to .PAK";
                         enabled: root.selected_folder != "";
                         clicked => {
                             let target = root.save_file("pak");
-                            if (target != "") { root.pack_pak(root.selected_folder, target, root.persisted_pak_fmt, root.persisted_pak_comp); }
+                            if (target != "") { root.pack_pak(root.selected_folder, target, root.persisted_pak_fmt, root.persisted_pak_comp, root.persisted_sf1_mode); }
                         }
                     }
                     ToolButton {
                         text: "Batch Pack Folders";
                         clicked => {
                             let root_folder = root.browse_folder();
-                            if (root_folder != "") { root.batch_pack_pak(root_folder, root.persisted_pak_fmt, root.persisted_pak_comp); }
+                            if (root_folder != "") { root.batch_pack_pak(root_folder, root.persisted_pak_fmt, root.persisted_pak_comp, root.persisted_sf1_mode); }
                         }
                     }
                     Rectangle { vertical-stretch: 1; }
                 }
 
-                // Tab 1: CFF Database Panel
                 if (root.active_tab == 1) : VerticalLayout {
                     spacing: 14px;
                     padding: 18px;
@@ -242,7 +243,7 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Zlib Level:"; color: #AAAAAA; vertical-alignment: center; width: 80px; }
-                        cff_comp := SpinBox {
+                        SpinBox {
                             value <=> root.persisted_cff_comp;
                             minimum: 0;
                             maximum: 9;
@@ -259,7 +260,6 @@ export component AppWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }
                 }
 
-                // Tab 2: Binary Chunk Inspector Panel
                 if (root.active_tab == 2) : VerticalLayout {
                     spacing: 14px;
                     padding: 18px;
@@ -289,7 +289,6 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // Tab 3: Empty Panel (Terminal active)
                 if (root.active_tab == 3) : VerticalLayout {
                     alignment: center;
                     padding: 18px;
@@ -302,14 +301,12 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Right Panel (Visual Display Area / TreeView Card / Full terminal)
             Rectangle {
                 background: #1C1C1C;
                 border-color: #2C2C2C;
                 border-width: 1px;
                 border-radius: 8px;
 
-                // Show Interactive TreeView on Tab 0 & Tab 1
                 if (root.active_tab == 0 || root.active_tab == 1) : VerticalLayout {
                     padding: 10px;
                     ListView {
@@ -335,7 +332,6 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // Show Value Modifier on Tab 2 (Inspector Panel Right side)
                 if (root.active_tab == 2) : VerticalLayout {
                     padding: 20px;
                     spacing: 12px;
@@ -367,7 +363,6 @@ export component AppWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }
                 }
 
-                // Show Log Terminal on Tab 3 (Terminal Panel Right side)
                 if (root.active_tab == 3) : VerticalLayout {
                     padding: 10px;
                     TextEdit {
@@ -380,7 +375,6 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Status Bar (Strictly matches the footer style of the screenshot)
         Rectangle {
             height: 30px;
             background: #1C1C1C;

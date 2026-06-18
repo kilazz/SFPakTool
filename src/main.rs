@@ -1,51 +1,70 @@
-//main.rs
-
 slint::include_modules!();
 
 mod cff;
 mod inspector;
 mod pak;
 
-use slint::{ModelRc, SharedString, StandardListViewItem, VecModel, Weak};
+use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
-// -----------------------------------------------------------------------------
-// THREAD-SAFE UI LOGGER
-// -----------------------------------------------------------------------------
 #[derive(Clone)]
 pub struct UiLogger {
-    ui_handle: Weak<AppWindow>,
+    sender: mpsc::Sender<String>,
 }
 
 impl UiLogger {
     pub fn log(&self, msg: &str) {
-        let msg_cloned = msg.to_string();
-        let _ = self.ui_handle.upgrade_in_event_loop(move |ui| {
-            let current = ui.get_log_text();
-            ui.set_log_text(format!("{}{}\n", current, msg_cloned).into());
-        });
+        // Send the log message through the channel (non-blocking)
+        let _ = self.sender.send(format!("{}\n", msg));
     }
 }
 
-// -----------------------------------------------------------------------------
-// MAIN ENTRY POINT
-// -----------------------------------------------------------------------------
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let ui_handle = ui.as_weak();
 
-    // Explicitly initialize progress log and status bar text on startup
     ui.set_log_text("System Ready.\n".into());
     ui.set_status_msg("Ready.".into());
 
-    // Shared state to persist tree structure on the main thread for collapse/expand
-    let tree_items_state = Rc::new(std::cell::RefCell::new(Vec::<pak::TreeItem>::new()));
+    // Channel for fast and non-blocking log transmission to the UI
+    let (log_tx, log_rx) = mpsc::channel::<String>();
+    let logger_base = UiLogger { sender: log_tx };
 
-    // -------------------------------------------------------------------------
-    // FILE DIALOG CALLBACKS WITH TREEVIEW RECONSTRUCTION
-    // -------------------------------------------------------------------------
+    let ui_weak_log = ui_handle.clone();
+
+    // Background thread for batching logs to prevent UI freezing (Quadratic complexity fix)
+    thread::spawn(move || {
+        let mut logs = VecDeque::with_capacity(300);
+        while let Ok(msg) = log_rx.recv() {
+            logs.push_back(msg);
+
+            // Drain the channel for any pending messages
+            while let Ok(m) = log_rx.try_recv() {
+                logs.push_back(m);
+            }
+
+            // Keep only the last 250 lines to prevent memory bloat and UI lag
+            while logs.len() > 250 {
+                logs.pop_front();
+            }
+
+            let combined = logs.iter().cloned().collect::<String>();
+            let _ = ui_weak_log.upgrade_in_event_loop(move |ui| {
+                ui.set_log_text(combined.into());
+            });
+
+            // Refresh UI every 60ms to guarantee smooth animations
+            thread::sleep(std::time::Duration::from_millis(60));
+        }
+    });
+
+    // Wrapped in Arc<Mutex> for thread-safe access between background parsing and the UI
+    let tree_items_state = Arc::new(Mutex::new(Vec::<pak::TreeItem>::new()));
+
     let ui_weak_browse = ui_handle.clone();
     let tree_items_browse = tree_items_state.clone();
     ui.on_browse_file(move |ext| {
@@ -55,31 +74,31 @@ fn main() -> Result<(), slint::PlatformError> {
             .pick_file()
         {
             let path_str = path.to_string_lossy().into_owned();
+            let ui_weak = ui_weak_browse.clone();
+            let tree_state = tree_items_browse.clone();
+            let ext_clone = ext_str.to_string();
 
-            // Refactored with isolated Option evaluation to avoid clippy's collapsible_if warning [1]
-            let file_paths_opt = if ext_str == "pak" {
-                pak::list_pak_files(&path).ok()
-            } else {
-                None
-            };
+            // Offload parsing to a background thread to keep UI responsive
+            thread::spawn(move || {
+                if ext_clone == "pak"
+                    && let Ok(file_paths) = pak::list_pak_files(&path)
+                {
+                    let items = pak::generate_tree_items(&file_paths);
+                    let tree_strings = pak::get_visible_tree_nodes(&items);
 
-            if let Some(file_paths) = file_paths_opt {
-                let items = pak::generate_tree_items(&file_paths);
-                let tree_strings = pak::get_visible_tree_nodes(&items);
-                *tree_items_browse.borrow_mut() = items; // Update the shared state on the main thread
+                    *tree_state.lock().unwrap() = items;
 
-                let mut list_items = Vec::new();
-                for t_str in tree_strings {
-                    list_items.push(StandardListViewItem::from(SharedString::from(t_str)));
+                    let list_items: Vec<_> = tree_strings
+                        .into_iter()
+                        .map(|s| StandardListViewItem::from(SharedString::from(s)))
+                        .collect();
+
+                    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                        let slint_model = ModelRc::from(Rc::new(VecModel::from(list_items)));
+                        ui.set_archive_files(slint_model);
+                    });
                 }
-
-                // Move the thread-safe Vec into the event loop closure
-                let _ = ui_weak_browse.upgrade_in_event_loop(move |ui| {
-                    // Instantiate the thread-unsafe Rc inside the main UI thread closure
-                    let slint_model = ModelRc::from(Rc::new(VecModel::from(list_items)));
-                    ui.set_archive_files(slint_model);
-                });
-            }
+            });
             SharedString::from(path_str)
         } else {
             SharedString::new()
@@ -91,25 +110,28 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_browse_folder(move || {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
             let path_str = path.to_string_lossy().into_owned();
+            let ui_weak = ui_weak_folder.clone();
+            let tree_state = tree_items_folder.clone();
 
-            // If selecting folder to pack, scan structure and generate TreeView preview
-            if let Ok(file_paths) = pak::list_directory_files(&path) {
-                let items = pak::generate_tree_items(&file_paths);
-                let tree_strings = pak::get_visible_tree_nodes(&items);
-                *tree_items_folder.borrow_mut() = items; // Update the shared state on the main thread
+            // Offload heavy directory walking to a background thread
+            thread::spawn(move || {
+                if let Ok(file_paths) = pak::list_directory_files(&path) {
+                    let items = pak::generate_tree_items(&file_paths);
+                    let tree_strings = pak::get_visible_tree_nodes(&items);
 
-                let mut list_items = Vec::new();
-                for t_str in tree_strings {
-                    list_items.push(StandardListViewItem::from(SharedString::from(t_str)));
+                    *tree_state.lock().unwrap() = items;
+
+                    let list_items: Vec<_> = tree_strings
+                        .into_iter()
+                        .map(|t| StandardListViewItem::from(SharedString::from(t)))
+                        .collect();
+
+                    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                        let slint_model = ModelRc::from(Rc::new(VecModel::from(list_items)));
+                        ui.set_archive_files(slint_model);
+                    });
                 }
-
-                // Move the thread-safe Vec into the event loop closure
-                let _ = ui_weak_folder.upgrade_in_event_loop(move |ui| {
-                    // Instantiate the thread-unsafe Rc inside the main UI thread closure
-                    let slint_model = ModelRc::from(Rc::new(VecModel::from(list_items)));
-                    ui.set_archive_files(slint_model);
-                });
-            }
+            });
             SharedString::from(path_str)
         } else {
             SharedString::new()
@@ -128,22 +150,19 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // INTERACTIVE TREEVIEW CLICK EVENT CALLBACK
-    // -------------------------------------------------------------------------
     let tree_items_click = tree_items_state.clone();
     let ui_weak_click = ui_handle.clone();
     ui.on_archive_item_clicked(move |visible_index| {
         if visible_index < 0 {
             return;
         }
-        let mut items = tree_items_click.borrow_mut();
+        let mut items = tree_items_click.lock().unwrap();
         if pak::toggle_tree_node(&mut items, visible_index as usize) {
             let visible_nodes = pak::get_visible_tree_nodes(&items);
-            let mut list_items = Vec::new();
-            for t_str in visible_nodes {
-                list_items.push(StandardListViewItem::from(SharedString::from(t_str)));
-            }
+            let list_items: Vec<_> = visible_nodes
+                .into_iter()
+                .map(|t| StandardListViewItem::from(SharedString::from(t)))
+                .collect();
             let _ = ui_weak_click.upgrade_in_event_loop(move |ui| {
                 let slint_model = ModelRc::from(Rc::new(VecModel::from(list_items)));
                 ui.set_archive_files(slint_model);
@@ -151,12 +170,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // PAK ARCHIVE ENGINE CALLBACKS (INCLUDING BATCH OPERATIONS)
-    // -------------------------------------------------------------------------
-    let logger_pak_unpack = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
+    let logger_pak_unpack = logger_base.clone();
     ui.on_unpack_pak(move |input, out| {
         let logger = logger_pak_unpack.clone();
         let in_path = PathBuf::from(input.as_str());
@@ -172,18 +186,24 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    let logger_pak_pack = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
-    ui.on_pack_pak(move |src, out, fmt, comp| {
+    let logger_pak_pack = logger_base.clone();
+    ui.on_pack_pak(move |src, out, fmt, comp, sf1_mode| {
         let logger = logger_pak_pack.clone();
         let src_path = PathBuf::from(src.as_str());
         let out_path = PathBuf::from(out.as_str());
         let fmt_str = fmt.to_string();
+        let sf1_mode_str = sf1_mode.to_string();
 
         thread::spawn(move || {
             logger.log(&format!("[*] Packing directory into PAK: {:?}", src_path));
-            if let Err(e) = pak::pack_pak(&src_path, &out_path, &fmt_str, comp as u32, &logger) {
+            if let Err(e) = pak::pack_pak(
+                &src_path,
+                &out_path,
+                &fmt_str,
+                comp as u32,
+                &sf1_mode_str,
+                &logger,
+            ) {
                 logger.log(&format!("[!] Error packing PAK: {}", e));
             } else {
                 logger.log("[+] PAK Pack cycle completed successfully.");
@@ -191,9 +211,7 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    let logger_batch_unpack = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
+    let logger_batch_unpack = logger_base.clone();
     ui.on_batch_unpack_pak(move |root_folder| {
         let logger = logger_batch_unpack.clone();
         let root_path = PathBuf::from(root_folder.as_str());
@@ -205,27 +223,23 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    let logger_batch_pack = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
-    ui.on_batch_pack_pak(move |root_folder, fmt, comp| {
+    let logger_batch_pack = logger_base.clone();
+    ui.on_batch_pack_pak(move |root_folder, fmt, comp, sf1_mode| {
         let logger = logger_batch_pack.clone();
         let root_path = PathBuf::from(root_folder.as_str());
         let fmt_str = fmt.to_string();
+        let sf1_mode_str = sf1_mode.to_string();
 
         thread::spawn(move || {
-            if let Err(e) = pak::batch_pack_folders(&root_path, &fmt_str, comp as u32, &logger) {
+            if let Err(e) =
+                pak::batch_pack_folders(&root_path, &fmt_str, comp as u32, &sf1_mode_str, &logger)
+            {
                 logger.log(&format!("[!] Batch Pack Error: {}", e));
             }
         });
     });
 
-    // -------------------------------------------------------------------------
-    // CFF DATABASE ENGINE CALLBACKS
-    // -------------------------------------------------------------------------
-    let logger_cff_unpack = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
+    let logger_cff_unpack = logger_base.clone();
     ui.on_unpack_cff(move |input, out| {
         let logger = logger_cff_unpack.clone();
         let in_path = PathBuf::from(input.as_str());
@@ -244,9 +258,7 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    let logger_cff_pack = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
+    let logger_cff_pack = logger_base.clone();
     ui.on_pack_cff(move |input, out, comp| {
         let logger = logger_cff_pack.clone();
         let in_path = PathBuf::from(input.as_str());
@@ -265,14 +277,12 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // BINARY CHUNK INSPECTOR CALLBACKS
-    // -------------------------------------------------------------------------
     let ui_weak = ui_handle.clone();
     ui.on_scan_binary(move |dat, filter| {
         let path = PathBuf::from(dat.as_str());
         let filter_str = filter.as_str();
 
+        // This is fast enough to block UI slightly, but ideally could be spawned too if needed.
         let items = inspector::scan_strings(&path, filter_str);
 
         let mut slint_items: Vec<StandardListViewItem> = Vec::new();
@@ -289,21 +299,17 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_read_value(|dat, offset, dtype| {
-        let val = inspector::read_val(dat.as_str(), offset.as_str(), dtype.as_str());
-        val.into()
+        inspector::read_val(dat.as_str(), offset.as_str(), dtype.as_str()).into()
     });
 
-    let logger_inspector = UiLogger {
-        ui_handle: ui_handle.clone(),
-    };
+    let logger_inspector = logger_base.clone();
     ui.on_write_value(move |dat, offset, dtype, new_val| {
-        let result = inspector::write_val(
+        if let Err(e) = inspector::write_val(
             dat.as_str(),
             offset.as_str(),
             dtype.as_str(),
             new_val.as_str(),
-        );
-        if let Err(e) = result {
+        ) {
             logger_inspector.log(&format!("[!] Inspector Write Error: {}", e));
         } else {
             logger_inspector.log(&format!(

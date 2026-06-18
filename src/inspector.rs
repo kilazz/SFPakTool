@@ -1,5 +1,6 @@
 //inspector.rs
 
+use crate::cff::{decode_windows, encode_windows};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -15,14 +16,12 @@ pub fn scan_strings(path: &Path, filter: &str) -> Vec<(usize, String)> {
         let mut start_offset = 0;
 
         for (i, &b) in data.iter().enumerate() {
-            // Refactored to utilize standard .contains() range checker
             if (32..=126).contains(&b) {
                 if current_str.is_empty() {
                     start_offset = i;
                 }
                 current_str.push(b as char);
             } else {
-                // Collapsed nested if blocks
                 if current_str.len() >= 4
                     && (filter.is_empty()
                         || current_str.to_lowercase().contains(&filter.to_lowercase()))
@@ -32,7 +31,6 @@ pub fn scan_strings(path: &Path, filter: &str) -> Vec<(usize, String)> {
                 current_str.clear();
             }
         }
-        // Don't forget EOF string check
         if current_str.len() >= 4
             && (filter.is_empty() || current_str.to_lowercase().contains(&filter.to_lowercase()))
         {
@@ -73,8 +71,7 @@ pub fn read_val(path: &str, offset_str: &str, dtype: &str) -> String {
                 let mut buf = [0u8; 128];
                 let _ = f.read(&mut buf);
                 let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-                let (cow, _, _) = encoding_rs::WINDOWS_1252.decode(&buf[..end]);
-                return cow.into_owned();
+                return decode_windows(&buf[..end]);
             }
             _ => return "Unknown Type".into(),
         }
@@ -110,9 +107,9 @@ pub fn write_val(
             f.write_f32::<LittleEndian>(v)?;
         }
         "String" => {
-            let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(new_val);
+            let encoded = encode_windows(new_val);
             f.write_all(&encoded)?;
-            f.write_u8(0)?; // null terminator
+            f.write_u8(0)?;
         }
         _ => {}
     }
