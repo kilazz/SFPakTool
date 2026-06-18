@@ -1,5 +1,3 @@
-//inspector.rs
-
 use crate::cff::{decode_windows, encode_windows};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{File, OpenOptions};
