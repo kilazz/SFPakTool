@@ -1,5 +1,5 @@
 ## SFTool
-A complete, high-performance, and lightweight modding and localization for **SpellForce 1/2** games.
+Utility for **SpellForce 1/2** modding, written in Rust and powered by the Slint GUI framework.
 
 ## Features
 
