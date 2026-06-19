@@ -116,7 +116,8 @@ pub fn write_val(
 
 fn parse_offset(s: &str) -> usize {
     let s = s.trim();
-    if s.to_lowercase().starts_with("0x") {
+    // Safely check length to avoid out-of-bounds panics if the input is strictly '0x' or shorter
+    if s.to_lowercase().starts_with("0x") && s.len() > 2 {
         usize::from_str_radix(&s[2..], 16).unwrap_or(0)
     } else {
         s.parse().unwrap_or(0)

@@ -166,7 +166,8 @@ pub fn list_directory_files(dir_path: &Path) -> io::Result<Vec<String>> {
     let mut file_list = Vec::new();
     for entry in WalkDir::new(dir_path).into_iter().filter_map(|e| e.ok()) {
         if entry.path().is_file() {
-            let rel = entry.path().strip_prefix(dir_path).unwrap();
+            // Avoid unwrap() on path formatting fallbacks
+            let rel = entry.path().strip_prefix(dir_path).unwrap_or(entry.path());
             file_list.push(rel.to_string_lossy().replace("\\", "/"));
         }
     }
@@ -462,9 +463,10 @@ fn pack_sf2(src_dir: &Path, out_file: &Path, comp_level: u32, logger: &UiLogger)
     let num_files = files.len();
 
     for (idx, file_path) in files.iter().enumerate() {
+        // Safe prefix stripping with fallback
         let rel_path = file_path
             .strip_prefix(src_dir)
-            .unwrap()
+            .unwrap_or(file_path)
             .to_string_lossy()
             .replace('/', "\\")
             .to_lowercase();
@@ -670,10 +672,11 @@ fn pack_sf1_scratch(src_dir: &Path, out_file: &Path, logger: &UiLogger) -> io::R
         if entry.path().is_file() {
             let name = entry.file_name().to_string_lossy();
             if name != ".sf1_meta.bin" && !name.starts_with('.') {
+                // Safe prefix stripping with robust fallback path
                 let rel = entry
                     .path()
                     .strip_prefix(src_dir)
-                    .unwrap()
+                    .unwrap_or(entry.path())
                     .to_string_lossy()
                     .replace('/', "\\")
                     .to_lowercase();
@@ -820,7 +823,14 @@ fn pack_sf1_scratch(src_dir: &Path, out_file: &Path, logger: &UiLogger) -> io::R
             (0, 0)
         };
 
-        let name_off_raw = *string_offsets.get(&node.path).unwrap();
+        // Safer retrieval of node path offset to prevent logical crashes
+        let name_off_raw = *string_offsets.get(&node.path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Missing string offset for path: {}", node.path),
+            )
+        })?;
+
         let dir_path = Path::new(&node.path)
             .parent()
             .unwrap_or_else(|| Path::new(""))
@@ -830,7 +840,12 @@ fn pack_sf1_scratch(src_dir: &Path, out_file: &Path, logger: &UiLogger) -> io::R
         let dir_off_raw = if dir_path.is_empty() {
             0x00FFFFFF
         } else {
-            let dir_off_base = *string_offsets.get(&dir_path).unwrap();
+            let dir_off_base = *string_offsets.get(&dir_path).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Missing directory offset for: {}", dir_path),
+                )
+            })?;
             let mut b_flag = 0;
             if dir_path != current_dir {
                 b_flag = 1;

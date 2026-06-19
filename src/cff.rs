@@ -385,7 +385,17 @@ fn import_text(json_path: &Path, chunk_path: &Path) -> io::Result<()> {
                 continue;
             }
             let parts: Vec<&str> = key.split('_').collect();
-            let offset = parts[1].parse::<usize>().unwrap();
+
+            // Safe parsing of key parts to prevent panics when importing hand-edited files
+            let offset = parts
+                .get(1)
+                .and_then(|s| s.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Invalid offset in metadata key: {}", key),
+                    )
+                })?;
 
             let mut text_bytes = encode_windows(val);
             if text_bytes.len() > 511 {
@@ -408,10 +418,42 @@ fn import_text(json_path: &Path, chunk_path: &Path) -> io::Result<()> {
         let mut entries: BTreeMap<u32, (u32, u8, String, String)> = BTreeMap::new();
         for (key, val) in &texts {
             let parts: Vec<&str> = key.splitn(4, '_').collect();
-            let idx = parts[0].parse::<u32>().unwrap();
-            let id_val = parts[1].parse::<u32>().unwrap();
-            let flag = parts[2].parse::<u8>().unwrap();
-            entries.insert(idx, (id_val, flag, val.clone(), parts[3].to_string()));
+
+            // Safe parsing with proper propagation of formatting errors.
+            // Using .first() instead of .get(0) based on clippy recommendation
+            let idx = parts
+                .first()
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Missing or invalid index field in key: {}", key),
+                    )
+                })?;
+
+            let id_val = parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Missing or invalid ID field in key: {}", key),
+                    )
+                })?;
+
+            let flag = parts
+                .get(2)
+                .and_then(|s| s.parse::<u8>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Missing or invalid flag field in key: {}", key),
+                    )
+                })?;
+
+            let dev_key = parts.get(3).unwrap_or(&"").to_string();
+
+            entries.insert(idx, (id_val, flag, val.clone(), dev_key));
         }
 
         out.write_u32::<LittleEndian>(entries.len() as u32)?;
@@ -432,10 +474,53 @@ fn import_text(json_path: &Path, chunk_path: &Path) -> io::Result<()> {
         let mut entries: BTreeMap<u32, TableBasedEntry> = BTreeMap::new();
         for (key, val) in &texts {
             let parts: Vec<&str> = key.splitn(4, '_').collect();
-            let idx = parts[0].parse::<u32>().unwrap();
-            let id_val = parts[1].parse::<u32>().unwrap();
-            let extra_bytes = hex_to_bytes(parts[2]);
-            let str_idx = parts[3][3..].parse::<usize>().unwrap();
+
+            // Safe parsing of table entry indices.
+            // Using .first() instead of .get(0) based on clippy recommendation
+            let idx = parts
+                .first()
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Missing or invalid index field in key: {}", key),
+                    )
+                })?;
+
+            let id_val = parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Missing or invalid ID field in key: {}", key),
+                    )
+                })?;
+
+            let extra_bytes = parts
+                .get(2)
+                .map(|&hex_str| hex_to_bytes(hex_str))
+                .unwrap_or_default();
+
+            let str_idx_str = parts.get(3).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Missing string target in key: {}", key),
+                )
+            })?;
+            if str_idx_str.len() < 4 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Malformed string marker in key: {}", key),
+                ));
+            }
+
+            let str_idx = str_idx_str[3..].parse::<usize>().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse index in table string '{}': {}", key, e),
+                )
+            })?;
 
             let entry = entries.entry(idx).or_insert_with(|| TableBasedEntry {
                 id: id_val,
